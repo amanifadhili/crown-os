@@ -1,0 +1,444 @@
+// -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*-
+/* exported CandidatePopup */
+
+const { Clutter, GLib, GObject, IBus, St } = imports.gi;
+
+const BoxPointer = imports.ui.boxpointer;
+const Main = imports.ui.main;
+
+var MAX_CANDIDATES_PER_PAGE = 16;
+
+var DEFAULT_INDEX_LABELS = ['1', '2', '3', '4', '5', '6', '7', '8',
+                            '9', '0', 'a', 'b', 'c', 'd', 'e', 'f'];
+
+var INPUT_SOURCE_POPUP_TIME = 1000; // ms
+var INPUT_SOURCE_ICON_SIZE = 22;
+
+// On X11 the shortcut's key grab focuses the client out, and that can reach us
+// before the keybinding handler runs.
+var TEXT_FOCUS_GRACE_TIME = 500; // ms
+
+var CandidateArea = GObject.registerClass({
+    Signals: {
+        'candidate-clicked': { param_types: [GObject.TYPE_UINT,
+                                             GObject.TYPE_UINT,
+                                             Clutter.ModifierType.$gtype] },
+        'cursor-down': {},
+        'cursor-up': {},
+        'next-page': {},
+        'previous-page': {},
+    },
+}, class CandidateArea extends St.BoxLayout {
+    _init() {
+        super._init({
+            vertical: true,
+            reactive: true,
+            visible: false,
+        });
+        this._candidateBoxes = [];
+        for (let i = 0; i < MAX_CANDIDATES_PER_PAGE; ++i) {
+            let box = new St.BoxLayout({ style_class: 'candidate-box',
+                                         reactive: true,
+                                         track_hover: true });
+            box._indexLabel = new St.Label({ style_class: 'candidate-index' });
+            box._candidateLabel = new St.Label({ style_class: 'candidate-label' });
+            box.add_child(box._indexLabel);
+            box.add_child(box._candidateLabel);
+            this._candidateBoxes.push(box);
+            this.add(box);
+
+            let j = i;
+            box.connect('button-release-event', (actor, event) => {
+                this.emit('candidate-clicked', j, event.get_button(), event.get_state());
+                return Clutter.EVENT_PROPAGATE;
+            });
+        }
+
+        this._buttonBox = new St.BoxLayout({ style_class: 'candidate-page-button-box' });
+
+        this._previousButton = new St.Button({
+            style_class: 'candidate-page-button candidate-page-button-previous button',
+            x_expand: true,
+        });
+        this._previousButton.child = new St.Icon({ style_class: 'candidate-page-button-icon' });
+        this._buttonBox.add_child(this._previousButton);
+
+        this._nextButton = new St.Button({
+            style_class: 'candidate-page-button candidate-page-button-next button',
+            x_expand: true,
+        });
+        this._nextButton.child = new St.Icon({ style_class: 'candidate-page-button-icon' });
+        this._buttonBox.add_child(this._nextButton);
+
+        this.add(this._buttonBox);
+
+        this._previousButton.connect('clicked', () => {
+            this.emit('previous-page');
+        });
+        this._nextButton.connect('clicked', () => {
+            this.emit('next-page');
+        });
+
+        this._orientation = -1;
+        this._cursorPosition = 0;
+    }
+
+    vfunc_scroll_event(scrollEvent) {
+        switch (scrollEvent.direction) {
+        case Clutter.ScrollDirection.UP:
+            this.emit('cursor-up');
+            break;
+        case Clutter.ScrollDirection.DOWN:
+            this.emit('cursor-down');
+            break;
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    setOrientation(orientation) {
+        if (this._orientation == orientation)
+            return;
+
+        this._orientation = orientation;
+
+        if (this._orientation == IBus.Orientation.HORIZONTAL) {
+            this.vertical = false;
+            this.remove_style_class_name('vertical');
+            this.add_style_class_name('horizontal');
+            this._previousButton.child.icon_name = 'xsi-go-previous-symbolic';
+            this._nextButton.child.icon_name = 'xsi-go-next-symbolic';
+        } else {                // VERTICAL || SYSTEM
+            this.vertical = true;
+            this.add_style_class_name('vertical');
+            this.remove_style_class_name('horizontal');
+            this._previousButton.child.icon_name = 'xsi-go-up-symbolic';
+            this._nextButton.child.icon_name = 'xsi-go-down-symbolic';
+        }
+    }
+
+    setCandidates(indexes, candidates, cursorPosition, cursorVisible) {
+        for (let i = 0; i < MAX_CANDIDATES_PER_PAGE; ++i) {
+            let visible = i < candidates.length;
+            let box = this._candidateBoxes[i];
+            box.visible = visible;
+
+            if (!visible)
+                continue;
+
+            box._indexLabel.text = indexes && indexes[i] ? indexes[i] : DEFAULT_INDEX_LABELS[i];
+            box._candidateLabel.text = candidates[i];
+        }
+
+        this._candidateBoxes[this._cursorPosition].remove_style_pseudo_class('selected');
+        this._cursorPosition = cursorPosition;
+        if (cursorVisible)
+            this._candidateBoxes[cursorPosition].add_style_pseudo_class('selected');
+    }
+
+    updateButtons(wrapsAround, page, nPages) {
+        if (nPages < 2) {
+            this._buttonBox.hide();
+            return;
+        }
+        this._buttonBox.show();
+        this._previousButton.reactive = wrapsAround || page > 0;
+        this._nextButton.reactive = wrapsAround || page < nPages - 1;
+    }
+});
+
+var InputSourcePopup = GObject.registerClass(
+class InputSourcePopup extends BoxPointer.BoxPointer {
+    _init() {
+        super._init(St.Side.TOP);
+        this.visible = false;
+        this.style_class = 'candidate-popup-boxpointer';
+        this.important = true;
+        Main.layoutManager.addChrome(this, { doNotAdd: true });
+        global.overlay_group.add_actor(this);
+
+        this._box = new St.BoxLayout({ style_class: 'candidate-popup-content' });
+        this.bin.set_child(this._box);
+
+        // Sized to fit a flag (all 4:3), so switching between flags, icons
+        // and labels doesn't resize the popup.
+        let width = Math.ceil(INPUT_SOURCE_ICON_SIZE * 4 / 3);
+        this._slot = new St.Bin({
+            style: `min-width: ${width}px; min-height: ${INPUT_SOURCE_ICON_SIZE}px;`,
+        });
+        this._box.add_child(this._slot);
+
+        this._createIndicator = null;
+        this._hideId = 0;
+    }
+
+    _setIndicator() {
+        this._slot.child?.destroy();
+        this._slot.set_child(this._createIndicator(INPUT_SOURCE_ICON_SIZE));
+    }
+
+    reposition(cursor) {
+        let node = this.get_theme_node();
+        let radius = node.get_length('-arrow-border-radius');
+        let halfBase = Math.floor(node.get_length('-arrow-base') / 2);
+
+        this.bin.min_width = 2 * (radius + halfBase) + 1;
+        this.setPosition(cursor, 0.5);
+    }
+
+    popup(createIndicator, cursor) {
+        this._createIndicator = createIndicator;
+        this._setIndicator();
+        this.reposition(cursor);
+        this.open(BoxPointer.PopupAnimation.NONE);
+        this.get_parent().set_child_above_sibling(this, null);
+
+        if (this._hideId)
+            GLib.source_remove(this._hideId);
+
+        this._hideId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, INPUT_SOURCE_POPUP_TIME, () => {
+            this._hideId = 0;
+            this.close(BoxPointer.PopupAnimation.NONE);
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    refresh() {
+        if (this.visible)
+            this._setIndicator();
+    }
+
+    dismiss() {
+        if (this._hideId) {
+            GLib.source_remove(this._hideId);
+            this._hideId = 0;
+        }
+
+        this.close(BoxPointer.PopupAnimation.NONE);
+    }
+});
+
+var CandidatePopup = GObject.registerClass(
+class IbusCandidatePopup extends BoxPointer.BoxPointer {
+    _init() {
+        super._init(St.Side.TOP);
+        this.visible = false;
+        this.style_class = 'candidate-popup-boxpointer';
+        this.important = true;
+
+        this._dummyCursor = new St.Widget({ opacity: 0 });
+        Main.uiGroup.add_actor(this._dummyCursor);
+
+        Main.layoutManager.addChrome(this, { doNotAdd: true });
+        global.overlay_group.add_actor(this);
+
+        let box = new St.BoxLayout({ style_class: 'candidate-popup-content',
+                                     vertical: true });
+        this.bin.set_child(box);
+
+        this._preeditText = new St.Label({ style_class: 'candidate-popup-text',
+                                           visible: false });
+        box.add(this._preeditText);
+
+        this._auxText = new St.Label({ style_class: 'candidate-popup-text',
+                                       visible: false });
+        box.add(this._auxText);
+
+        this._candidateArea = new CandidateArea();
+        box.add(this._candidateArea);
+
+        this._candidateArea.connect('previous-page', () => {
+            this._panelService.page_up();
+        });
+        this._candidateArea.connect('next-page', () => {
+            this._panelService.page_down();
+        });
+
+        this._candidateArea.connect('cursor-up', () => {
+            this._panelService.cursor_up();
+        });
+        this._candidateArea.connect('cursor-down', () => {
+            this._panelService.cursor_down();
+        });
+
+        this._candidateArea.connect('candidate-clicked', (area, index, button, state) => {
+            this._panelService.candidate_clicked(index, button, state);
+        });
+
+        this._inputSourcePopup = new InputSourcePopup();
+        this._textFocused = false;
+        this._textFocusLostTime = 0;
+
+        this._panelService = null;
+    }
+
+    setPanelService(panelService) {
+        this._panelService = panelService;
+        this._textFocused = false;
+        if (!panelService) {
+            this._inputSourcePopup.dismiss();
+            return;
+        }
+
+        panelService.connect('focus-in', (ps, path) => {
+            // InputContext_1 is ibus-daemon's own fake context, focused
+            // whenever no client is.
+            if (GLib.str_has_suffix(path, '/InputContext_1'))
+                this._loseTextFocus();
+            else
+                this._textFocused = true;
+        });
+
+        panelService.connect('set-cursor-location', (ps, x, y, w, h) => {
+            this._setDummyCursorGeometry(x, y, w, h);
+        });
+        try {
+            panelService.connect('set-cursor-location-relative', (ps, x, y, w, h) => {
+                if (!global.display.focus_window)
+                    return;
+                let window = global.display.focus_window.get_compositor_private();
+                this._setDummyCursorGeometry(window.x + x, window.y + y, w, h);
+            });
+        } catch (e) {
+            // Only recent IBus versions have support for this signal
+            // which is used for wayland clients. In order to work
+            // with older IBus versions we can silently ignore the
+            // signal's absence.
+        }
+        panelService.connect('update-preedit-text', (ps, text, cursorPosition, visible) => {
+            this._preeditText.visible = visible;
+            this._updateVisibility();
+
+            this._preeditText.text = text.get_text();
+
+            let attrs = text.get_attributes();
+            if (attrs) {
+                this._setTextAttributes(this._preeditText.clutter_text,
+                                        attrs);
+            }
+        });
+        panelService.connect('show-preedit-text', () => {
+            this._preeditText.show();
+            this._updateVisibility();
+        });
+        panelService.connect('hide-preedit-text', () => {
+            this._preeditText.hide();
+            this._updateVisibility();
+        });
+        panelService.connect('update-auxiliary-text', (_ps, text, visible) => {
+            this._auxText.visible = visible;
+            this._updateVisibility();
+
+            this._auxText.text = text.get_text();
+        });
+        panelService.connect('show-auxiliary-text', () => {
+            this._auxText.show();
+            this._updateVisibility();
+        });
+        panelService.connect('hide-auxiliary-text', () => {
+            this._auxText.hide();
+            this._updateVisibility();
+        });
+        panelService.connect('update-lookup-table', (_ps, lookupTable, visible) => {
+            this._candidateArea.visible = visible;
+            this._updateVisibility();
+
+            let nCandidates = lookupTable.get_number_of_candidates();
+            let cursorPos = lookupTable.get_cursor_pos();
+            let pageSize = lookupTable.get_page_size();
+            let nPages = Math.ceil(nCandidates / pageSize);
+            let page = cursorPos == 0 ? 0 : Math.floor(cursorPos / pageSize);
+            let startIndex = page * pageSize;
+            let endIndex = Math.min((page + 1) * pageSize, nCandidates);
+
+            let indexes = [];
+            let indexLabel;
+            for (let i = 0; (indexLabel = lookupTable.get_label(i)); ++i)
+                indexes.push(indexLabel.get_text());
+
+            Main.virtualKeyboardManager.resetSuggestions();
+
+            let candidates = [];
+            for (let i = startIndex; i < endIndex; ++i) {
+                candidates.push(lookupTable.get_candidate(i).get_text());
+                Main.virtualKeyboardManager.addSuggestion(lookupTable.get_candidate(i).get_text(), () => {
+                    let index = i;
+                    this._panelService.candidate_clicked(index, 1, 0);
+                });
+            }
+
+            this._candidateArea.setCandidates(indexes,
+                                              candidates,
+                                              cursorPos % pageSize,
+                                              lookupTable.is_cursor_visible());
+            this._candidateArea.setOrientation(lookupTable.get_orientation());
+            this._candidateArea.updateButtons(lookupTable.is_round(), page, nPages);
+        });
+        panelService.connect('show-lookup-table', () => {
+            this._candidateArea.show();
+            this._updateVisibility();
+        });
+        panelService.connect('hide-lookup-table', () => {
+            this._candidateArea.hide();
+            this._updateVisibility();
+        });
+        panelService.connect('focus-out', () => {
+            this._loseTextFocus();
+            this.close(BoxPointer.PopupAnimation.NONE);
+            Main.virtualKeyboardManager.resetSuggestions();
+        });
+    }
+
+    _loseTextFocus() {
+        this._textFocused = false;
+        this._textFocusLostTime = GLib.get_monotonic_time();
+    }
+
+    _hasTextFocus() {
+        return this._textFocused ||
+               GLib.get_monotonic_time() - this._textFocusLostTime < TEXT_FOCUS_GRACE_TIME * 1000;
+    }
+
+    showInputSourceInfo(createIndicator) {
+        if (!this._inputSourcePopup.visible && !this._hasTextFocus())
+            return;
+
+        this._inputSourcePopup.popup(createIndicator, this._dummyCursor);
+    }
+
+    refreshInputSourceInfo() {
+        this._inputSourcePopup.refresh();
+    }
+
+    _setDummyCursorGeometry(x, y, w, h) {
+        this._dummyCursor.set_position(x, y);
+        this._dummyCursor.set_size(w, h);
+
+        if (this.visible)
+            this.setPosition(this._dummyCursor, 0);
+        if (this._inputSourcePopup.visible)
+            this._inputSourcePopup.reposition(this._dummyCursor);
+    }
+
+    _updateVisibility() {
+        let isVisible = !Main.virtualKeyboardManager.visible &&
+                         (this._preeditText.visible ||
+                          this._auxText.visible ||
+                          this._candidateArea.visible);
+
+        if (isVisible) {
+            this.setPosition(this._dummyCursor, 0);
+            this.open(BoxPointer.PopupAnimation.NONE);
+            this.get_parent().set_child_above_sibling(this, null);
+        } else {
+            this.close(BoxPointer.PopupAnimation.NONE);
+        }
+    }
+
+    _setTextAttributes(clutterText, ibusAttrList) {
+        let attr;
+        for (let i = 0; (attr = ibusAttrList.get(i)); ++i) {
+            if (attr.get_attr_type() == IBus.AttrType.BACKGROUND)
+                clutterText.set_selection(attr.get_start_index(), attr.get_end_index());
+        }
+    }
+});

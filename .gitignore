@@ -1,0 +1,95 @@
+# ==========================================
+# Crown OS - Git Ignore Configuration
+# ==========================================
+
+# 1. Heavy ISO & OS Image Build Trees
+exports/
+iso-work/
+
+# 2. Local Custom Build Installation Prefix
+local/
+
+# 3. Build Artifact Directories (Meson, Autotools, CMake)
+builddir/
+**/builddir/
+build/
+**/build/
+_build/
+**/_build/
+obj-*/
+**/obj-*/
+export/
+**/export/
+subprojects/
+**/subprojects/
+
+# 4. Binary Files, Compiled Objects & Shared Libraries
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.bin
+
+# 5. OS Images, Disk Files & Filesystem Blobs
+*.iso
+*.squashfs
+*.img
+*.qcow2
+*.vmdk
+
+# 6. Tarballs, Archives & Packages
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tgz
+*.zip
+*.7z
+*.rar
+*.deb
+*.rpm
+
+# 7. Debian Packaging Build Artifacts
+debian/*.debhelper
+debian/*.debhelper.log
+debian/*.log
+debian/*.substvars
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/tmp/
+debian/cinnamon*/
+debian/libmuffin*/
+debian/gir1.2-meta-muffin*/
+debian/muffin*/
+
+# 8. Python Bytecode & Virtual Environments
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# 9. IDE, Editor & OS Temporary Files
+.cache/
+**/.cache/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.#*
+.idea/
+.vscode/
+*.bak
+
+# 10. Logs & Runtime Files
+*.log
+.env

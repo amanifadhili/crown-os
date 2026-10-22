@@ -1,0 +1,15 @@
+{
+    "section1": {
+        "type": "section",
+        "description": "Behavior"
+    },
+    "launcherList": {
+        "type": "generic",
+        "default": ["firefox.desktop", "org.x.velocitty.desktop", "nemo.desktop"]
+    },
+    "allow-dragging": {
+        "type": "switch",
+        "default": true,
+        "description": "Allow dragging of launchers"
+    }
+}

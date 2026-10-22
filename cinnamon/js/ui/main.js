@@ -1,0 +1,2052 @@
+// -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*-
+/**
+ * FILE:main.js
+ * @short_description: This is the heart of Cinnamon, the mother of everything.
+ * @placesManager (PlacesManager.PlacesManager): The places manager
+ * @overview (Overview.Overview): The "scale" overview
+ * @expo (Expo.Expo): The "expo" overview
+ * @runDialog (RunDialog.RunDialog): The run dialog
+ * @lookingGlass (LookingGlass.Melange): The looking glass object
+ * @wm (WindowManager.WindowManager): The window manager
+ * @messageTray (MessageTray.MessageTray): The mesesage tray
+ * @notificationDaemon (NotificationDaemon.NotificationDaemon): The notification daemon
+ * @windowAttentionHandler (WindowAttentionHandler.WindowAttentionHandler): The window attention handle
+ * @screenRecorder (ScreenRecorder.ScreenRecorder): The recorder
+ * @cinnamonDBusService (CinnamonDBus.Cinnamon): The cinnamon dbus object
+ * @screenshotService (Screenshot.ScreenshotService): Implementation of gnome-shell's screenshot interface.
+ * @modalCount (int): The number of modals "pushed"
+ * @modalActorFocusStack (array): Array of pushed modal actors
+ * @uiGroup (Cinnamon.GenericContainer): The group containing all Cinnamon and
+ * Muffin actors
+ *
+ * @magnifier (Magnifier.Magnifier): The magnifier
+ * @locatePointer (LocatePointer.LocatePointer): The locate pointer object
+ * @xdndHandler (XdndHandler.XdndHandler): The X DND handler
+ * @statusIconDispatcher (StatusIconDispatcher.StatusIconDispatcher): The status icon dispatcher
+ * @virtualKeyboard (VirtualKeyboard.Keyboard): The keyboard object
+ * @layoutManager (Layout.LayoutManager): The layout manager.
+ * @monitorLabeler (MonitorLabeler.MonitorLabeler): Adds labels to each monitor when configuring displays.
+ * \
+ * All actors that are part of the Cinnamon UI ar handled by the layout
+ * manager, which will determine when to show and hide the actors etc.
+ *
+ * @panelManager (Panel.PanelManager): The panel manager.
+ * \
+ * This is responsible for handling events relating to panels, eg. showing all
+ * panels.
+ *
+ * @themeManager (ThemeManager.ThemeManager): The theme manager
+ * @soundManager (SoundManager.SoundManager): The sound manager
+ * @settingsManager (Settings.SettingsManager): The manager of the xlet Settings API
+ *
+ * @backgroundManager (BackgroundManager.BackgroundManager): The background
+ * manager.
+ * \
+ * This starts and watches cinnamon-background-daemon, which paints the
+ * wallpaper, and holds the startup reveal until it reports one on screen. It
+ * also translates an application's "Set as wallpaper" -- a write of the flat
+ * picture-uri key, in Cinnamon's schema or GNOME's -- into the per-monitor list
+ * the daemon reads.
+ *
+ * @slideshowManager (SlideshowManager.SlideshowManager): The slideshow manager.
+ * \
+ * This starts cinnamon-slideshow when any monitor is configured to rotate its
+ * wallpaper. The rotation happens in that daemon; nothing here drives it.
+ *
+ * @keybindingManager (KeybindingManager.KeybindingManager): The keybinding manager
+ * @systrayManager (Systray.SystrayManager): The systray manager
+ * @gesturesManager (GesturesManager.GesturesManager): Gesture support  from ToucheEgg.
+ *
+ * @keyboardManager (KeyboardManager.KeyboardManager): Handle keyboard layouts.
+ * 
+ * @osdWindow (OsdWindow.OsdWindow): Osd window that pops up when you use media
+ * keys.
+ * @tracker (Cinnamon.WindowTracker): The window tracker
+ * @workspace_names (array): Names of workspace
+ * @deskletContainer (DeskletManager.DeskletContainer): The desklet container.
+ * \
+ * This is a container that contains all the desklets as childs. Its actor is
+ * put between @global.bottom_window_group and @global.uiGroup.
+ * @software_rendering (boolean): Whether software rendering is used
+ * @animations_enabled (boolean): Whether any effects or animations should be used.
+ * @popup_rendering_actor (Clutter.Actor): The popup actor that is in the process of rendering
+ * @xlet_startup_error (boolean): Whether there was at least one xlet that did
+ * not manage to load
+ *
+ * The main file is responsible for launching Cinnamon as well as creating its
+ * components. The C part of cinnamon calls the @start() function, which then
+ * initializes all of cinnamon. Most components of Cinnamon can be accessed
+ * through main.
+ */
+
+const Clutter = imports.gi.Clutter;
+const Gio = imports.gi.Gio;
+const GioUnix = imports.gi.GioUnix;
+const GLib = imports.gi.GLib;
+const Gtk = imports.gi.Gtk;
+const Mainloop = imports.mainloop;
+const Meta = imports.gi.Meta;
+const Cinnamon = imports.gi.Cinnamon;
+const St = imports.gi.St;
+const GObject = imports.gi.GObject;
+const XApp = imports.gi.XApp;
+const PointerTracker = imports.misc.pointerTracker;
+
+const AutomountManager = imports.ui.automountManager;
+const AutorunManager = imports.ui.autorunManager;
+const SoundManager = imports.ui.soundManager;
+const BackgroundManager = imports.ui.backgroundManager;
+const Config = imports.misc.config;
+const SlideshowManager = imports.ui.slideshowManager;
+var AppletManager = imports.ui.appletManager;
+const SearchProviderManager = imports.ui.searchProviderManager;
+const DeskletManager = imports.ui.deskletManager;
+const ExtensionSystem = imports.ui.extensionSystem;
+const VirtualKeyboard = imports.ui.virtualKeyboard;
+const MessageTray = imports.ui.messageTray;
+const OsdWindow = imports.ui.osdWindow;
+const Overview = imports.ui.overview;
+const Expo = imports.ui.expo;
+const Panel = imports.ui.panel;
+const ChromeRaise = imports.ui.chromeRaise;
+const PlacesManager = imports.ui.placesManager;
+const PolkitAuthenticationAgent = imports.ui.polkitAuthenticationAgent;
+const KeyringPrompt = imports.ui.keyringPrompt;
+const RunDialog = imports.ui.runDialog;
+const Layout = imports.ui.layout;
+const LookingGlass = imports.ui.lookingGlass;
+const NotificationDaemon = imports.ui.notificationDaemon;
+const WindowAttentionHandler = imports.ui.windowAttentionHandler;
+const CinnamonDBus = imports.ui.cinnamonDBus;
+const CinnamonMountOperation = imports.ui.cinnamonMountOperation;
+const Screenshot = imports.ui.screenshot;
+const ScreensaverController = imports.ui.screensaver.controller;
+const ThemeManager = imports.ui.themeManager;
+const Magnifier = imports.ui.magnifier;
+const LocatePointer = imports.ui.locatePointer;
+const XdndHandler = imports.ui.xdndHandler;
+const StatusIconDispatcher = imports.ui.statusIconDispatcher;
+const Util = imports.misc.util;
+const Keybindings = imports.ui.keybindings;
+const Settings = imports.ui.settings;
+const Systray = imports.ui.systray;
+const Accessibility = imports.ui.accessibility;
+const ModalDialog = imports.ui.modalDialog;
+const InputMethod = imports.misc.inputMethod;
+const FcitxInputMethod = imports.misc.fcitxInputMethod;
+const IMFramework = imports.misc.imFramework;
+const ScreenRecorder = imports.ui.screenRecorder;
+const {GesturesManager} = imports.ui.gestures.gesturesManager;
+const {MonitorLabeler} = imports.ui.monitorLabeler;
+const {CinnamonPortalHandler} = imports.misc.portalHandlers;
+const {EndSessionDialog} = imports.ui.endSessionDialog;;
+const {KeyboardManager, getInputSourceManager} = imports.ui.keyboardManager;
+const GnomeSession = imports.misc.gnomeSession;
+
+var LAYOUT_TRADITIONAL = "traditional";
+var LAYOUT_FLIPPED = "flipped";
+var LAYOUT_CLASSIC = "classic";
+
+var DEFAULT_BACKGROUND_COLOR = Clutter.Color.from_pixel(0x000000ff);
+
+var panel = null;
+var soundManager = null;
+var backgroundManager = null;
+var slideshowManager = null;
+var placesManager = null;
+var panelManager = null;
+var chromeRaiseManager = null;
+var osdWindowManager = null;
+var screensaverController = null;
+var lockdownSettings = null;
+var overview = null;
+var expo = null;
+var runDialog = null;
+var lookingGlass = null;
+var lookingGlassUpdateID = 0;
+var wm = null;
+var a11yHandler = null;
+var messageTray = null;
+var notificationDaemon = null;
+var windowAttentionHandler = null;
+var screenRecorder = null;
+var cinnamonDBusService = null;
+var cinnamonMountOpDBusService = null;
+var automountManager = null;
+var autorunManager = null;
+var screenshotService = null;
+var modalCount = 0;
+var modalActorFocusStack = [];
+var uiGroup = null;
+var switcherGroup = null;
+var magnifier = null;
+var locatePointer = null;
+var xdndHandler = null;
+var statusIconDispatcher = null;
+var virtualKeyboardManager = null;
+var inputMethod = null;
+var layoutManager = null;
+var networkAgent = null;
+var monitorLabeler = null;
+var themeManager = null;
+var keybindingManager = null;
+var _errorLogStack = [];
+var _startDate;
+var _defaultCssStylesheet = null;
+var _cssStylesheet = null;
+var dynamicWorkspaces = null;
+var tracker = null;
+var settingsManager = null;
+var systrayManager = null;
+var wmSettings = null;
+var pointerSwitcher = null;
+var gesturesManager = null;
+var keyboardManager = null;
+var workspace_names = [];
+
+var actionMode = Cinnamon.ActionMode.NORMAL;
+
+var applet_side = St.Side.TOP; // Kept to maintain compatibility. Doesn't seem to be used anywhere
+var deskletContainer = null;
+
+var software_rendering = false;
+var animations_enabled = false;
+
+var popup_rendering_actor = null;
+
+var xlet_startup_error = false;
+
+var endSessionDialog = null;
+var sessionManagerProxy = null;
+
+var gpuOffloadHelper = null;
+var gpu_offload_supported = false;
+
+var RunState = {
+    INIT : 0,
+    STARTUP : 1,
+    RUNNING : 2
+}
+
+var runState = RunState.INIT;
+
+// Override Gettext localization
+const Gettext = imports.gettext;
+Gettext.bindtextdomain('cinnamon', '/usr/share/locale');
+Gettext.textdomain('cinnamon');
+const _ = Gettext.gettext;
+
+function setRunState(state) {
+    let oldState = runState;
+
+    if (state != oldState) {
+        runState = state;
+        cinnamonDBusService.EmitRunStateChanged();
+    }
+}
+
+function _addXletDirectoriesToSearchPath() {
+    imports.searchPath.unshift(global.datadir);
+    imports.searchPath.unshift(global.userdatadir);
+    // Including the system data directory also includes unnecessary system utilities,
+    // so we are making sure they are removed.
+    let types = ['applets', 'desklets', 'extensions', 'search_providers'];
+    let importsCache = {};
+    for (let i = 0; i < types.length; i++) {
+        // Cache our existing xlet GJS importer objects
+        importsCache[types[i]] = imports[types[i]];
+    }
+    // Remove the two paths we added to the beginning of the array.
+    imports.searchPath.splice(0, 2);
+    for (let i = 0; i < types.length; i++) {
+        // Re-add cached xlet objects
+        imports[types[i]] = importsCache[types[i]];
+        importsCache[types[i]] = undefined;
+    }
+}
+
+function _initUserSession() {
+    global.workspace_manager.override_workspace_layout(Meta.DisplayCorner.TOPLEFT, false, 1, -1);
+
+    systrayManager = new Systray.SystrayManager();
+
+    keybindingManager.setBuiltinHandler('panel-run-dialog', Meta.KeyBindingAction.PANEL_RUN_DIALOG,
+        function() {
+            if (!lockdownSettings.get_boolean('disable-command-line')) {
+                getRunDialog().open();
+            }
+        }, Cinnamon.ActionMode.NORMAL);
+}
+
+function _loadOskLayouts() {
+    _oskResource = Gio.Resource.load('%s/cinnamon-osk-layouts.gresource'.format(global.datadir));
+    _oskResource._register();
+    St.TextureCache.get_default().get_icon_theme().add_resource_path('/org/cinnamon/osk-layouts');
+}
+
+function do_shutdown_sequence() {
+    panelManager.panels.forEach(function (panel) {
+        panel.actor.hide();
+    });
+}
+
+function onSessionOver() {
+    global.log("Session is ending");
+    soundManager.disable();
+    backgroundManager.disableRestart();
+}
+
+function _reparentActor(actor, newParent) {
+    let parent = actor.get_parent();
+    if (parent)
+        parent.remove_actor(actor);
+    if(newParent)
+        newParent.add_actor(actor);
+}
+
+/**
+ * start:
+ *
+ * Starts cinnamon. Should not be called in JavaScript code
+ */
+function start() {
+    global.reparentActor = _reparentActor;
+
+    // Monkey patch utility functions into the global proxy;
+    // This is easier and faster than indirecting down into global
+    // if we want to call back up into JS.
+    global.logTrace = _logTrace;
+    global.logWarning = _logWarning;
+    global.logError = _logError;
+    global.log = _logInfo;
+
+    try {
+        imports.clearCache;
+    } catch (e) {
+        global.logWarning('CJS clearCache not available. Xlet reloading may not work correctly (cjs update required).');
+    }
+
+    let cinnamonStartTime = new Date().getTime();
+
+    log(`About to start Cinnamon (${Meta.is_wayland_compositor() ? "Wayland" : "X11"} backend)`);
+
+    let backend = Meta.get_backend();
+
+    // Only cinnamon2d launcher will set CINNAMON_2D - this is deliberate by the user.
+    let cinnamon_2d = GLib.getenv("CINNAMON_2D") !== null;
+    let live = false;
+
+    if (!backend.is_rendering_hardware_accelerated() || cinnamon_2d) {
+        global.logError("Cinnamon Software Rendering mode enabled");
+        software_rendering = true;
+
+        // We only warn if software_rendering is not of the user's volition.
+        if (!cinnamon_2d && GLib.file_test("/proc/cmdline", GLib.FileTest.EXISTS)) {
+            let content = Cinnamon.get_file_contents_utf8_sync("/proc/cmdline");
+            if (content.match("boot=casper") || content.match("boot=live")) {
+                // If we're in a live session, pretend we're using hardware rendering,
+                // so all animations end up being enabled.
+                software_rendering = false;
+                live = true;
+            }
+        }
+    }
+
+    // Chain up async errors reported from C
+    global.connect('notify-error', function (global, msg, detail) { notifyError(msg, detail); });
+
+    GioUnix.DesktopAppInfo.set_desktop_env('X-Cinnamon');
+
+    lockdownSettings = new Gio.Settings({ schema_id: 'org.cinnamon.desktop.lockdown' });
+
+    new CinnamonPortalHandler();
+    cinnamonDBusService = new CinnamonDBus.CinnamonDBus();
+
+    setRunState(RunState.STARTUP);
+
+    // Constructed this early so it can kick off the wallpaper daemon, which
+    // preloads and paints before we reveal the desktop.
+    backgroundManager = new BackgroundManager.BackgroundManager();
+    backgroundManager.hideBackground();
+
+    screenshotService = new Screenshot.ScreenshotService();
+
+    // Ensure CinnamonWindowTracker and CinnamonAppUsage are initialized; this will
+    // also initialize CinnamonAppSystem first.  CinnamonAppSystem
+    // needs to load all the .desktop files, and CinnamonWindowTracker
+    // will use those to associate with windows.  Right now
+    // the Monitor doesn't listen for installed app changes
+    // and recalculate application associations, so to avoid
+    // races for now we initialize it here.  It's better to
+    // be predictable anyways.
+    tracker = Cinnamon.WindowTracker.get_default();
+
+    let startTime = new Date().getTime();
+    Cinnamon.AppSystem.get_default();
+    global.log('Cinnamon.AppSystem.get_default() started in %d ms'.format(new Date().getTime() - startTime));
+
+    // The stage is always covered so Clutter doesn't need to clear it; however
+    // the color is used as the default contents for the Muffin root background
+    // actor so set it anyways.
+    global.stage.background_color = DEFAULT_BACKGROUND_COLOR;
+    global.stage.no_clear_hint = true;
+
+    _defaultCssStylesheet = global.datadir + '/theme/cinnamon.css';
+
+    soundManager = new SoundManager.SoundManager();
+
+    /* note: This call will initialize St.TextureCache */
+    themeManager = new ThemeManager.ThemeManager();
+
+    settingsManager = new Settings.SettingsManager();
+
+    slideshowManager = new SlideshowManager.SlideshowManager();
+
+    keybindingManager = new Keybindings.KeybindingManager();
+    deskletContainer = new DeskletManager.DeskletContainer();
+
+    gesturesManager = new GesturesManager();
+
+    uiGroup = new Layout.UiActor({ name: 'uiGroup' });
+    uiGroup.set_flags(Clutter.ActorFlags.NO_LAYOUT);
+
+    global.reparentActor(global.window_group, uiGroup);
+
+    // Holds the overview, expo, and app-switcher overlays. Sits just above
+    // window_group (the slot overlay_group used to occupy).
+    switcherGroup = new Clutter.Actor({ name: 'switcherGroup' });
+    uiGroup.add_actor(switcherGroup);
+
+    let stage_bg = new Clutter.Actor();
+    let constraint = new Clutter.BindConstraint({ source: global.stage, coordinate: Clutter.BindCoordinate.ALL, offset: 0 })
+    stage_bg.add_constraint(constraint);
+    stage_bg.set_background_color(new Clutter.Color({red: 0, green: 0, blue: 0, alpha: 255}));
+    stage_bg.set_size(global.screen_width, global.screen_height);
+    global.stage.add_actor(stage_bg);
+
+    stage_bg.add_actor(uiGroup);
+
+    global.reparentActor(global.top_window_group, global.stage);
+
+    // Keep the feedback/overlay group topmost, above the ui group and the top
+    // window group. It holds DND icons and the fcitx input-method candidate
+    // popup, both of which must render above Cinnamon's own chrome.
+    global.reparentActor(global.overlay_group, global.stage);
+
+    global.menuStack = [];
+
+    // Created before LayoutManager so chromeRaiseManager is never null by the
+    // time chrome visibility recalculations can consult isPanelRaised().
+    chromeRaiseManager = new ChromeRaise.ChromeRaiseManager();
+
+    layoutManager = new Layout.LayoutManager();
+
+    Panel.checkPanelUpgrade();
+
+    panelManager = new Panel.PanelManager();
+
+    let startupAnimationEnabled = global.settings.get_boolean("startup-animation");
+
+    let do_startup_animation = !global.session_running &&
+                                startupAnimationEnabled &&
+                                !software_rendering;
+
+    // On a fresh login we hold the desktop behind the startup cover until the
+    // wallpaper is on screen, whether or not we play the fade. (On a Cinnamon
+    // restart the wallpaper daemon is already up, so there's nothing to wait for.)
+    let first_login = !global.session_running;
+
+    // Comes down exactly once, from whichever path gets there first --
+    // _startupAnimationComplete() is not safe to run twice.
+    let revealed = false;
+    let revealDesktop = (animate) => {
+        if (revealed)
+            return;
+        revealed = true;
+        layoutManager._doStartupAnimation(animate);
+    };
+
+    if (first_login) {
+        backgroundManager.showBackground();
+        layoutManager._prepareStartupAnimation();
+    }
+
+    let pointerTracker = new PointerTracker.PointerTracker();
+    pointerTracker.setPosition(layoutManager.primaryMonitor.x + layoutManager.primaryMonitor.width/2,
+        layoutManager.primaryMonitor.y + layoutManager.primaryMonitor.height/2);
+
+    pointerSwitcher = new PointerTracker.PointerSwitcher();
+    monitorLabeler = new MonitorLabeler();
+
+    xdndHandler = new XdndHandler.XdndHandler();
+    osdWindowManager = new OsdWindow.OsdWindowManager();
+
+    overview = new Overview.Overview();
+    expo = new Expo.Expo();
+
+    statusIconDispatcher = new StatusIconDispatcher.StatusIconDispatcher();
+
+    layoutManager._updateBoxes();
+
+    wm = new imports.ui.windowManager.WindowManager();
+    messageTray = new MessageTray.MessageTray();
+    notificationDaemon = new NotificationDaemon.NotificationDaemon();
+    windowAttentionHandler = new WindowAttentionHandler.WindowAttentionHandler();
+    placesManager = new PlacesManager.PlacesManager();
+
+    // NM Agent
+    if (Config.BUILT_NM_AGENT) {
+        if (global.settings.get_boolean("enable-nm-agent")) {
+            networkAgent = new imports.ui.networkAgent.NetworkAgent();
+            global.log('NetworkManager agent: enabled')
+        } else {
+            global.log('NetworkManager agent: disabled by settings')
+        }
+    }
+    else {
+        global.log('NetworkManager agent: disabled in build')
+    }
+
+    // Polkit Agent
+    if (global.settings.get_boolean("enable-polkit-agent")) {
+        PolkitAuthenticationAgent.init();
+    }
+    else {
+        global.log('Polkit agent: disabled by settings')
+    }
+
+    // SSH Agent
+    if (global.settings.get_boolean("enable-ssh-agent")) {
+        KeyringPrompt.init();
+        global.log('SSH agent: enabled')
+    }
+    else {
+        global.log('SSH agent: disabled by settings')
+    }
+
+    magnifier = new Magnifier.Magnifier();
+    locatePointer = new LocatePointer.LocatePointer();
+
+    layoutManager.init();
+
+    _addXletDirectoriesToSearchPath();
+    _initUserSession();
+    screenRecorder = new ScreenRecorder.ScreenRecorder();
+
+    _startDate = new Date();
+
+    global.display.connect('restart', () => {
+        global.real_restart();
+        return true;
+    });
+
+    global.stage.connect('captured-event', _stageEventHandler);
+
+    global.log('loaded at ' + _startDate);
+    log('Cinnamon started at ' + _startDate);
+
+    wmSettings = new Gio.Settings({schema_id: "org.cinnamon.desktop.wm.preferences"})
+    workspace_names = wmSettings.get_strv("workspace-names");
+
+    wmSettings.connect("changed::workspace-names", function (settings, pspec) {
+        workspace_names = wmSettings.get_strv("workspace-names");
+    });
+
+    global.display.connect('gl-video-memory-purged', loadTheme);
+
+    gpuOffloadHelper = XApp.GpuOffloadHelper.get();
+    gpuOffloadHelper.connect("ready", (helper, success) => {
+        gpu_offload_supported = success && gpuOffloadHelper.is_offload_supported();
+        global.log(`GPU offload supported: ${gpu_offload_supported}`);
+    });
+
+    // We're ready for the session manager to move to the next phase
+    GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+        Meta.register_with_session();
+        return GLib.SOURCE_REMOVE;
+    });
+
+    _loadOskLayouts();
+    keyboardManager = new KeyboardManager();
+    getInputSourceManager().ensureInitialized();
+    let framework = IMFramework.getFramework();
+    if (framework === IMFramework.FRAMEWORK_FCITX && Meta.is_wayland_compositor()) {
+        // On Wayland muffin installs a native input-method-v2 backend that
+        // bridges to an external fcitx; adopt it as Main.inputMethod instead of
+        // the X11 D-Bus backend. It is already set on the Clutter backend.
+        inputMethod = Clutter.get_default_backend().get_input_method();
+    }
+    if (inputMethod == null) {
+        if (framework === IMFramework.FRAMEWORK_FCITX && !Meta.is_wayland_compositor())
+            inputMethod = new FcitxInputMethod.FcitxInputMethod();
+        else
+            inputMethod = new InputMethod.InputMethod();
+        Clutter.get_default_backend().set_input_method(inputMethod);
+    }
+    virtualKeyboardManager = new VirtualKeyboard.VirtualKeyboardManager();
+    virtualKeyboardManager.connect("enabled-changed", () => {
+        if (runDialog !== null) {
+            runDialog.destroy();
+            runDialog = null;
+        }
+    });
+
+    screensaverController = new ScreensaverController.ScreensaverController();
+
+    // Protect from being replaced by extensions.
+    Object.defineProperty(imports.ui.main, 'screensaverController', {
+        value: imports.ui.main.screensaverController,
+        writable: false,
+        configurable: false
+    });
+
+    cinnamonMountOpDBusService = new CinnamonMountOperation.CinnamonMountOpHandler();
+    automountManager = new AutomountManager.AutomountManager();
+    autorunManager = new AutorunManager.AutorunManager();
+
+    Promise.all([
+        AppletManager.init(),
+        ExtensionSystem.init(),
+        DeskletManager.init(),
+        SearchProviderManager.init()
+    ]).then(function() {
+        createLookingGlass();
+
+        a11yHandler = new Accessibility.A11yHandler();
+
+        // We only warn if software_rendering is not of the user's volition.
+        if (software_rendering && !cinnamon_2d && !live) {
+            notifyCinnamon2d();
+        }
+
+        if (xlet_startup_error)
+            Mainloop.timeout_add_seconds(3, notifyXletStartupError);
+
+        let sound_settings = new Gio.Settings( {schema_id: "org.cinnamon.sounds"} );
+        let do_login_sound = sound_settings.get_boolean("login-enabled");
+
+        // We're mostly prepared for the startup animation
+        // now, but since a lot is going on asynchronously
+        // during startup, let's defer the startup animation
+        // until the event loop is uncontended and idle.
+        // This helps to prevent us from running the animation
+        // when the system is bogged down
+        if (first_login) {
+            backgroundManager.whenReady(() => {
+                // Play the login sound as we reveal, not at the start of the wait.
+                if (do_login_sound)
+                    soundManager.play('login');
+
+                GLib.idle_add(GLib.PRIORITY_LOW, () => {
+                    // Fade the cover away if the animation is enabled, otherwise drop it instantly.
+                    revealDesktop(do_startup_animation);
+                    return GLib.SOURCE_REMOVE;
+                });
+            });
+        } else {
+            backgroundManager.showBackground();
+            setRunState(RunState.RUNNING);
+        }
+
+        // Disable panel edit mode when Cinnamon starts
+        if (global.settings.get_boolean("panel-edit-mode")) {
+            global.settings.set_boolean("panel-edit-mode", false);
+        }
+
+        global.connect('shutdown', do_shutdown_sequence);
+
+        GnomeSession.SessionManager(function(proxy, error) {
+            if (error) {
+                global.logWarning("Main: failed to connect to the session manager: " + error);
+                return;
+            }
+
+            sessionManagerProxy = proxy;
+            sessionManagerProxy.connectSignal('SessionOver', onSessionOver);
+        });
+
+        global.log('Cinnamon took %d ms to start'.format(new Date().getTime() - cinnamonStartTime));
+    }).catch(error => {
+        global.logError(`promise failed: ${error}`);
+        // The cover hides the cursor and swallows every event, so a failed
+        // init would otherwise look like a hung session.
+        if (first_login)
+            revealDesktop(false);
+    });
+}
+
+function updateAnimationsEnabled() {
+    let settings_enabled = global.settings.get_boolean("desktop-effects-workspace");
+    animations_enabled = (!software_rendering) && settings_enabled;
+    St.Settings.get().animations_enabled = animations_enabled;
+    global.log(
+        `Animations: ${animations_enabled ? "enabled" : "disabled"} ` +
+        `(${software_rendering ? "software rendering" : "hardware rendering"}, ` +
+        `${settings_enabled ? "enabled" : "disabled"} in settings)`);
+    cinnamonDBusService.notifyAnimationsEnabled();
+}
+
+function notifyCinnamon2d() {
+    let icon = new St.Icon({ icon_name: 'driver-manager',
+                             icon_type: St.IconType.FULLCOLOR,
+                             icon_size: 36 });
+    let notification =
+        criticalNotify(_("Check your video drivers"),
+                       _("Your system is currently running without video hardware acceleration.") +
+                       "\n\n" +
+                       _("You may experience poor performance and high CPU usage."),
+                       icon);
+
+    if (GLib.file_test("/usr/bin/cinnamon-driver-manager", GLib.FileTest.EXISTS)) {
+        notification.addButton("driver-manager", _("Launch Driver Manager"));
+        notification.connect("action-invoked", this.launchDriverManager);
+    }
+}
+
+function notifyXletStartupError() {
+    let icon = new St.Icon({ icon_name: 'dialog-warning',
+                             icon_type: St.IconType.FULLCOLOR,
+                             icon_size: 36 });
+    warningNotify(_("Problems during Cinnamon startup"),
+                  _("Cinnamon started successfully, but one or more applets, desklets or extensions failed to load.\n\n") +
+                  _("Check your system log and the Cinnamon LookingGlass log for any issues.  ") +
+                  _("You can disable the offending extension(s) in Cinnamon Settings to prevent this message from recurring.  ") +
+                  _("Please contact the developer."), icon);
+
+}
+
+/* Provided by panelManager now, but kept here for xlet compatibility */
+
+function enablePanels() {
+    panelManager.enablePanels();
+}
+
+function disablePanels() {
+    panelManager.disablePanels();
+}
+
+function getPanels() {
+    return panelManager.getPanels();
+}
+
+/**
+ * createFullScreenBackground:
+ *
+ * Creates a full-stage background actor containing one background per monitor.
+ * On X11, each child is the root pixmap actor positioned at the monitor's
+ * location. On Wayland, each child is a clone of the layer-shell background
+ * surface for that monitor.
+ *
+ * Returns: a ClutterActor covering all monitors
+ */
+function createFullScreenBackground() {
+    let container = new imports.gi.Clutter.Actor();
+
+    for (let i = 0; i < layoutManager.monitors.length; i++) {
+        let monitor = layoutManager.monitors[i];
+        let bg = Meta.create_background_for_monitor(global.display, i);
+        if (bg) {
+            bg.set_position(monitor.x, monitor.y);
+            bg.set_size(monitor.width, monitor.height);
+            container.add_child(bg);
+        }
+    }
+
+    return container;
+}
+
+let _workspaces = [];
+let _checkWorkspacesId = 0;
+
+/*
+ * When the last window closed on a workspace is a dialog or splash
+ * screen, we assume that it might be an initial window shown before
+ * the main window of an application, and give the app a grace period
+ * where it can map another window before we remove the workspace.
+ */
+const LAST_WINDOW_GRACE_TIME = 1000;
+
+function _fillWorkspaceNames(index) {
+    // ensure that we have workspace names up to index
+    for (let i = index - workspace_names.length; i > 0; --i) {
+        workspace_names.push('');
+    }
+}
+
+function _shouldTrimWorkspace(i) {
+    return i >= 0 && (i >= global.workspace_manager.n_workspaces || !workspace_names[i].length);
+}
+
+function _trimWorkspaceNames() {
+    // trim empty or out-of-bounds names from the end.
+    let i = workspace_names.length - 1;
+    while (_shouldTrimWorkspace(i)) {
+        workspace_names.pop();
+        i--;
+    }
+}
+
+function _makeDefaultWorkspaceName(index) {
+    return _("Workspace") + " " + (index + 1).toString();
+}
+
+/**
+ * setWorkspaceName:
+ * @index (int): index of workspace
+ * @name (string): name of workspace
+ *
+ * Sets the name of the workspace @index to @name
+ */
+function setWorkspaceName(index, name) {
+    name.trim();
+    if (name != getWorkspaceName(index)) {
+        _fillWorkspaceNames(index);
+        workspace_names[index] = (name == _makeDefaultWorkspaceName(index) ?
+            "" :
+            name);
+        _trimWorkspaceNames();
+        wmSettings.set_strv("workspace-names", workspace_names);
+    }
+}
+
+/**
+ * getWorkspaceName:
+ * @index (int): index of workspace
+ *
+ * Retrieves the name of the workspace @index
+ *
+ * Returns (string): name of workspace
+ */
+function getWorkspaceName(index) {
+    let wsName = index < workspace_names.length ?
+        workspace_names[index] :
+        "";
+    wsName.trim();
+    return wsName.length > 0 ?
+        wsName :
+        _makeDefaultWorkspaceName(index);
+}
+
+/**
+ * hasDefaultWorkspaceName:
+ * @index (int): index of workspace
+ *
+ * Whether the workspace uses the default name
+ *
+ * Returns (boolean): whether the workspace uses the default name
+ */
+function hasDefaultWorkspaceName(index) {
+    return getWorkspaceName(index) == _makeDefaultWorkspaceName(index);
+}
+
+function reorderWorkspace(oldIndex, newIndex) {
+    let n = global.workspace_manager.n_workspaces;
+    if (oldIndex === newIndex ||
+        oldIndex < 0 || oldIndex >= n ||
+        newIndex < 0 || newIndex >= n)
+        return;
+
+    let workspace = global.workspace_manager.get_workspace_by_index(oldIndex);
+    global.workspace_manager.reorder_workspace(workspace, newIndex);
+
+    // If every workspace has its default name, there's nothing to move -
+    // default names regenerate from the index automatically.
+    let hasCustomName = false;
+    for (let i = 0; i < global.workspace_manager.n_workspaces; i++) {
+        if (!hasDefaultWorkspaceName(i)) {
+            hasCustomName = true;
+            break;
+        }
+    }
+    if (!hasCustomName)
+        return;
+
+    _fillWorkspaceNames(Math.max(oldIndex, newIndex) + 1);
+    let name = workspace_names[oldIndex] || '';
+    workspace_names.splice(oldIndex, 1);
+    workspace_names.splice(newIndex, 0, name);
+    _trimWorkspaceNames();
+    wmSettings.set_strv("workspace-names", workspace_names);
+}
+
+function _addWorkspace() {
+    global.workspace_manager.append_new_workspace(false, global.get_current_time());
+    return true;
+}
+
+function _removeWorkspace(workspace) {
+    if (global.workspace_manager.n_workspaces == 1)
+        return false;
+    let index = workspace.index();
+    if (index < workspace_names.length) {
+        workspace_names.splice (index, 1);
+    }
+    _trimWorkspaceNames();
+    wmSettings.set_strv("workspace-names", workspace_names);
+    global.workspace_manager.remove_workspace(workspace, global.get_current_time());
+    return true;
+}
+
+/**
+ * moveWindowToNewWorkspace:
+ * @metaWindow (Meta.Window): the window to be moved
+ * @switchToNewWorkspace (boolean): whether or not to switch to the
+ *                                  new created workspace
+ *
+ * Moves the window to a new workspace.
+ *
+ * If @switchToNewWorkspace is true, it will switch to the new workspace
+ * after moving the window
+ */
+function moveWindowToNewWorkspace(metaWindow, switchToNewWorkspace) {
+    if (switchToNewWorkspace) {
+        let targetCount = global.workspace_manager.n_workspaces + 1;
+        let nnwId = global.workspace_manager.connect('notify::n-workspaces', function() {
+            global.workspace_manager.disconnect(nnwId);
+            if (global.workspace_manager.n_workspaces === targetCount) {
+                let newWs = global.workspace_manager.get_workspace_by_index(global.workspace_manager.n_workspaces - 1);
+                newWs.activate(global.get_current_time());
+            }
+        });
+    }
+    metaWindow.change_workspace_by_index(global.workspace_manager.n_workspaces, true, global.get_current_time());
+}
+
+/**
+ * getThemeStylesheet:
+ *
+ * Get the theme CSS file that Cinnamon will load
+ *
+ * Returns (string): A file path that contains the theme CSS,
+ *                   null if using the default
+ */
+function getThemeStylesheet()
+{
+    return _cssStylesheet;
+}
+
+/**
+ * setThemeStylesheet:
+ * @cssStylesheet (string): A file path that contains the theme CSS,
+ *                         set it to null to use the default
+ *
+ * Set the theme CSS file that Cinnamon will load
+ */
+function setThemeStylesheet(cssStylesheet)
+{
+    _cssStylesheet = cssStylesheet;
+}
+
+/**
+ * loadTheme:
+ *
+ * Reloads the theme CSS file
+ */
+function loadTheme() {
+    let themeContext = St.ThemeContext.get_for_stage (global.stage);
+    let theme = new St.Theme ({ fallback_stylesheet: _defaultCssStylesheet });
+    let stylesheetLoaded = false;
+    if (_cssStylesheet != null) {
+        stylesheetLoaded = theme.load_stylesheet(_cssStylesheet);
+    }
+    if (!stylesheetLoaded) {
+        theme.load_stylesheet(_defaultCssStylesheet);
+        if (_cssStylesheet != null) {
+            global.logError("There was some problem parsing the theme: " + _cssStylesheet + ".  Falling back to the default theme.");
+        }
+    }
+
+    themeContext.set_theme (theme);
+}
+
+/**
+ * notify:
+ * @msg (string): A message
+ * @details (string): Additional information to be
+ *
+ * Sends a notification
+ */
+function notify(msg, details) {
+    let source = new MessageTray.SystemNotificationSource();
+    messageTray.add(source);
+    let notification = new MessageTray.Notification(source, msg, details);
+    notification.setTransient(true);
+    source.notify(notification);
+}
+
+/**
+ * criticalNotify:
+ * @msg: A critical message
+ * @details: Additional information
+ */
+function criticalNotify(msg, details, icon) {
+    let source = new MessageTray.SystemNotificationSource();
+    messageTray.add(source);
+    let notification = new MessageTray.Notification(source, msg, details, { icon: icon });
+    notification.setTransient(false);
+    notification.setUrgency(MessageTray.Urgency.CRITICAL);
+    source.notify(notification);
+    return notification;
+}
+
+function launchDriverManager() {
+    Util.spawnCommandLineAsync("cinnamon-driver-manager", null, null);
+}
+
+/**
+ * warningNotify:
+ * @msg: A warning message
+ * @details: Additional information
+ */
+function warningNotify(msg, details, icon) {
+    let source = new MessageTray.SystemNotificationSource();
+    messageTray.add(source);
+    let notification = new MessageTray.Notification(source, msg, details, { icon: icon });
+    notification.setTransient(false);
+    notification.setUrgency(MessageTray.Urgency.HIGH);
+    source.notify(notification);
+}
+
+/**
+ * notifyError:
+ * @msg (string): An error message
+ * @details (string): Additional information
+ *
+ * See cinnamon_global_notify_problem().
+ */
+function notifyError(msg, details) {
+    // Also print to stderr so it's logged somewhere
+    if (details)
+        log('error: ' + msg + ': ' + details);
+    else
+        log('error: ' + msg);
+    notify(msg, details);
+}
+
+/**
+ * formatLogArgument:
+ * @arg (any): A single argument.
+ * @recursion (int): Keeps track of the number of recursions.
+ * @depth (int): Controls how deeply to inspect object structures.
+ *
+ * Used by _log to handle each argument type and its formatting.
+ */
+function formatLogArgument(arg = '', recursion = 0, depth = 6) {
+    // Make sure falsey values are clearly indicated.
+    if (arg === null) {
+        arg = 'null';
+    } else if (arg === undefined) {
+        arg = 'undefined';
+    // Ensure strings are distinguishable.
+    } else if (typeof arg === 'string' && recursion > 0) {
+        arg = '\'' + arg + '\'';
+    }
+    // Check if we reached the depth threshold
+    if (recursion + 1 > depth) {
+        try {
+            arg = JSON.stringify(arg);
+        } catch (e) {
+            arg = arg.toString();
+        }
+        return arg;
+    }
+    let isGObject = arg instanceof GObject.Object;
+    let space = '';
+    for (let i = 0; i < recursion + 1; i++) {
+        space += '    ';
+    }
+    if (typeof arg === 'object') {
+        let isArray = Array.isArray(arg);
+        let brackets = isArray ? ['[', ']'] : ['{', '}'];
+        if (isGObject) {
+            arg = Util.getGObjectPropertyValues(arg);
+            if (Object.keys(arg).length === 0) {
+                return arg.toString();
+            }
+        }
+        let array = isArray ? arg : Object.keys(arg);
+        // Add beginning bracket with indentation
+        let string = brackets[0] + (recursion + 1 > depth ? '' : '\n');
+        for (let j = 0, len = array.length; j < len; j++) {
+            if (isArray) {
+                string += space + formatLogArgument(arg[j], recursion + 1, depth) + ',\n';
+            } else {
+                string += space + array[j] + ': ' + formatLogArgument(arg[array[j]], recursion + 1, depth) + ',\n';
+            }
+        }
+        // Remove one level of indentation and add the closing bracket.
+        space = space.substr(4, space.length);
+        arg = string + space + brackets[1];
+    // Functions, numbers, etc.
+    } else if (typeof arg === 'function') {
+        let array = arg.toString().split('\n');
+        for (let i = 0; i < array.length; i++) {
+            if (i === 0) continue;
+            array[i] = space + array[i];
+        }
+        arg = array.join('\n');
+    } else if (typeof arg !== 'string' || isGObject) {
+        arg = arg.toString();
+    }
+    return arg;
+}
+
+/**
+ * _log:
+ * @category (string): string message type ('info', 'error')
+ * @msg (string): A message string
+ * @...: Any further arguments are converted into JSON notation,
+ *       and appended to the log message, separated by spaces.
+ *
+ * Log a message into the LookingGlass error
+ * stream.  This is primarily intended for use by the
+ * extension system as well as debugging.
+ */
+function _log(category = 'info', msg = '') {
+    // Convert arguments into an array so it can be iterated.
+    let args = Array.prototype.slice.call(arguments);
+    // Remove category from the list of loggable arguments
+    args.shift();
+    let text = '';
+
+    for (let i = 0, len = args.length; i < len; i++) {
+        args[i] = formatLogArgument(args[i]);
+    }
+
+    if (args.length === 2) {
+        text = args[0] + ': ' + args[1];
+    } else {
+        text = args.join(' ');
+    }
+    let out = {
+        timestamp: new Date().getTime().toString(),
+        category: category,
+        message: text
+    };
+
+    _errorLogStack.push(out);
+
+    // If the melange window is open/exists, excessive dbus traffic caused by gesture debug
+    // logging can leave the desktop unstable. We end up with lots of:
+    //
+    // Attempting to call back into JSAPI during the sweeping phase of GC...
+    //
+    // This is a hack, and how we handle logging and melange probably needs looked at.
+
+    if (lookingGlass && !gesturesManager.gesture_active()) {
+        if (lookingGlassUpdateID > 0) {
+            GLib.source_remove (lookingGlassUpdateID);
+        }
+
+        lookingGlassUpdateID = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+             lookingGlass.emitLogUpdate();
+             lookingGlassUpdateID = 0;
+        });
+    }
+
+    log(`[LookingGlass/${category}] ${text}`);
+}
+
+/**
+ * isError:
+ * @obj (Object): the object to be tested
+ *
+ * Tests whether @obj is an error object
+ *
+ * Returns (boolean): whether @obj is an error object
+ */
+function isError(obj) {
+    if (obj == undefined) return false;
+
+    let isErr = false;
+    if (typeof(obj) == 'object' && 'message' in obj && 'stack' in obj) {
+        isErr = true;
+    } else if (obj instanceof GLib.Error) {
+        // Make existing logging functionality work as expected when passed
+        // a GLib.Error which doesn't normally have a stack trace attached.
+        let stack = new Error().stack;
+        // This is reached the first time isError is called by a _log function,
+        // so strip off this function call and the _log function that called us.
+        let strPos = stack.indexOf('\n', stack.indexOf('\n') + 1)  + 1;
+        stack = stack.substr(strPos);
+        obj.stack = stack;
+        isErr = true;
+    }
+    return isErr;
+}
+
+/**
+ * _LogTraceFormatted:
+ * @stack (string): the stack trace
+ *
+ * Prints the stack trace to the LookingGlass
+ * error stream in a predefined format
+ */
+function _LogTraceFormatted(stack) {
+    _log('trace', '\n<----------------\n' + stack + '---------------->');
+}
+
+/**
+ * _logTrace:
+ * @msg (Error): An error object
+ *
+ * Prints a stack trace of the given object.
+ *
+ * If msg is an error, its stack-trace will be
+ * printed. Otherwise, a stack-trace of the call
+ * will be generated
+ *
+ * If you want to print the message of an Error
+ * as well, use the other log functions instead.
+ */
+function _logTrace(msg) {
+    if(isError(msg)) {
+        _LogTraceFormatted(msg.stack);
+    } else {
+        try {
+            throw new Error();
+        } catch (e) {
+            // e.stack must have at least two lines, with the first being
+            // _logTrace() (which we strip off), and the second being
+            // our caller.
+            let trace = e.stack.substr(e.stack.indexOf('\n') + 1);
+            _LogTraceFormatted(trace);
+        }
+    }
+}
+
+/**
+ * _logWarning:
+ * @msg (Error/string): An error object or the message string
+ *
+ * Logs the message to the LookingGlass error
+ * stream.
+ *
+ * If msg is an error, its stack-trace will be
+ * printed.
+ */
+function _logWarning(msg) {
+    if(isError(msg)) {
+        _log('warning', msg.message);
+        _LogTraceFormatted(msg.stack);
+    } else {
+        _log('warning', msg);
+    }
+}
+
+/**
+ * _logError:
+ * @msg (string): (optional) The message string
+ * @error (Error): (optional) The error object
+ *
+ * Logs the following (if present) to the
+ * LookingGlass error stream:
+ * - The message from the error object
+ * - The stack trace of the error object
+ * - The message @msg
+ *
+ * It can be called in the form of either _logError(msg),
+ * _logError(error) or _logError(msg, error).
+ */
+function _logError(msg, error) {
+    if(error && isError(error)) {
+        _log('error', error.message);
+        _LogTraceFormatted(error.stack);
+        _log('error', msg);
+    } else if(isError(msg)) {
+        _log('error', msg.message);
+        _LogTraceFormatted(msg.stack);
+    } else {
+        _log('error', msg);
+    }
+}
+
+// If msg is an Error, its message will be printed as 'info' and its stack-trace will be printed as 'trace'
+/**
+ * _logInfo:
+ * @msg (Error/string): The error object or the message string
+ *
+ * Logs the message to the LookingGlass
+ * error stream. If @msg is an Error object,
+ * its stack trace will also be printed
+ */
+
+function _logInfo(msg) {
+    if (isError(msg)) {
+        _log('info', msg.message);
+        _LogTraceFormatted(msg.stack);
+    } else {
+        // Convert arguments to an array, add 'info' to the beginning of it. Invoke _log with apply so
+        // unlimited arguments can be passed to it.
+        let args = Array.prototype.slice.call(arguments);
+        _log.apply(this, ['info', ...args]);
+    }
+}
+
+/**
+ * logStackTrace:
+ * @msg (string): message
+ *
+ * Logs the message @msg to stdout with backtrace
+ */
+function logStackTrace(msg) {
+    try {
+        throw new Error();
+    } catch (e) {
+        // e.stack must have at least two lines, with the first being
+        // logStackTrace() (which we strip off), and the second being
+        // our caller.
+        let trace = e.stack.substr(e.stack.indexOf('\n') + 1);
+        log(msg ? (msg + '\n' + trace) : trace);
+    }
+}
+
+/**
+ * isWindowActorDisplayedOnWorkspace:
+ * @win (Meta.WindowActor): window actor
+ * @workspaceIndex (int): index of workspace
+ *
+ * Determines whether the window actor belongs to a specific workspace
+ *
+ * Returns (boolean): whether the window is on the workspace
+ */
+function isWindowActorDisplayedOnWorkspace(win, workspaceIndex) {
+    return win.get_workspace() == workspaceIndex ||
+        (win.get_meta_window() && win.get_meta_window().is_on_all_workspaces());
+}
+
+/**
+ * getWindowActorsForWorkspace:
+ * @workspaceIndex (int): index of workspace
+ *
+ * Gets a list of actors on a workspace
+ *
+ * Returns (array): the array of window actors
+ */
+function getWindowActorsForWorkspace(workspaceIndex) {
+    return global.get_window_actors().filter(function (win) {
+        return isWindowActorDisplayedOnWorkspace(win, workspaceIndex);
+    });
+}
+
+/**
+ * _shouldFilterKeybinding:
+ * @entry: The keybinding entry from keybindingManager (or undefined)
+ *
+ * Helper function to check if a keybinding should be filtered based on
+ * the current ActionMode. Returns true to BLOCK, false to ALLOW.
+ *
+ * This is used by both _filterKeybinding (window manager path) and
+ * _stageEventHandler (modal/stage capture path).
+ */
+function _shouldFilterKeybinding(entry) {
+    // Check if all keybindings should be blocked
+    if (actionMode == Cinnamon.ActionMode.NONE)
+        return true;
+
+    if (entry === undefined) {
+        // Binding not in our registry, fall back to old behavior
+        return global.stage_input_mode !== Cinnamon.StageInputMode.NORMAL;
+    }
+
+    // Check if current ActionMode is in the allowed modes for this binding
+    // Use bitwise AND - if result is non-zero, the mode is allowed
+    let allowed = (entry.allowedModes & actionMode) !== 0;
+
+    if (allowed) {
+        let lockModes = Cinnamon.ActionMode.LOCK_SCREEN | Cinnamon.ActionMode.UNLOCK_SCREEN;
+        if ((actionMode & lockModes) !== 0 && (entry.allowedModes & lockModes) !== 0) {
+            if (screensaverController?.locked && !screensaverController.allowKeyboardShortcuts) {
+                return true;
+            }
+        }
+    }
+
+    return !allowed;
+}
+
+/* This mimics some of the behavior in muffin's keybindings.c, to allow multi-key keybindings
+ * to work properly while pushModal is active and our input events are bypassing muffin's normal
+ * event handling.
+ *
+ * In normal input modes, single key (modifier) keybindings are activated on key-release, and multi-
+ * key bindings are activated on key-press.
+ *
+ * This needs to work in our pushModal state also, for things like layout-switching. We check the
+ * keyval of the event - if it's a modifier key it can potentially be a single-key binding or part
+ * of a multi-key binding, so we defer activating any single-key modifier bindings until key-release,
+ * to give the multi-key binding a chance to activate on key-press.
+ */
+let _modifierOnlyAction = 0;
+
+// Tracks whether a keybinding shortcut has actually been invoked through this
+// handler since the most recent modifier-key press while in a modal state. Used
+// to tell a bare modifier tap apart from a modifier used as part of a shortcut.
+let _shortcutInvokedSinceModifier = false;
+
+function _isModifierKeyval(symbol) {
+    return symbol === Clutter.KEY_Super_L   || symbol === Clutter.KEY_Super_R   ||
+           symbol === Clutter.KEY_Control_L || symbol === Clutter.KEY_Control_R ||
+           symbol === Clutter.KEY_Alt_L     || symbol === Clutter.KEY_Alt_R     ||
+           symbol === Clutter.KEY_Shift_L   || symbol === Clutter.KEY_Shift_R;
+}
+
+const _BINDING_MODIFIER_MASK = Clutter.ModifierType.SHIFT_MASK |
+                               Clutter.ModifierType.CONTROL_MASK |
+                               Clutter.ModifierType.MOD1_MASK |
+                               Clutter.ModifierType.MOD3_MASK |
+                               Clutter.ModifierType.MOD4_MASK |
+                               Clutter.ModifierType.MOD5_MASK;
+
+// Invoke a keybinding action from the modal handler, collapsing a fullscreen
+// panel raise only if the shortcut closed the last modal stacked on it - a
+// menu, expo, ... (captured before the invoke, so a shortcut that merely
+// raised a bare panel isn't collapsed).
+function _invokeKeybindingAction(action, modifierState) {
+    let hadStackedModal = chromeRaiseManager.hasStackedModal();
+    try {
+        keybindingManager.invoke_keybinding_action_by_id(action, modifierState & _BINDING_MODIFIER_MASK);
+    } catch (e) {
+        global.logError(`Exception in keybinding action: ${e}`);
+    }
+    if (hadStackedModal)
+        chromeRaiseManager.collapseIfBare();
+}
+
+function _stageEventHandler(actor, event) {
+    if (modalCount == 0)
+        return Clutter.EVENT_PROPAGATE;
+
+    let eventType = event.type();
+
+    if (eventType !== Clutter.EventType.KEY_PRESS &&
+        eventType !== Clutter.EventType.KEY_RELEASE) {
+        if (!popup_rendering_actor || eventType !== Clutter.EventType.BUTTON_RELEASE)
+            return Clutter.EVENT_PROPAGATE;
+        return (event.get_source() && popup_rendering_actor.contains(event.get_source()))
+            ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
+    }
+
+    if (event.get_source() instanceof Clutter.Text &&
+        (event.get_flags() & Clutter.EventFlags.INPUT_METHOD)) {
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    let keyCode = event.get_key_code();
+    let modifierState = Cinnamon.get_event_state(event);
+
+    if (eventType === Clutter.EventType.KEY_PRESS) {
+        if (_isModifierKeyval(event.get_key_symbol())) {
+            _shortcutInvokedSinceModifier = false;
+            let action = global.display.get_keybinding_action(keyCode, modifierState);
+            if (action > 0) {
+                let entry = keybindingManager.getBindingById(action);
+                if (!_shouldFilterKeybinding(entry)) {
+                    _modifierOnlyAction = action;
+                    return Clutter.EVENT_STOP;
+                }
+            }
+            return Clutter.EVENT_PROPAGATE;
+        }
+
+        _modifierOnlyAction = 0;
+
+        // During modal, muffin's process_iso_next_group doesn't run, handle xkb 'grp'
+        // here.
+        if (event.get_key_symbol() === Clutter.KEY_ISO_Next_Group) {
+            getInputSourceManager()._modifiersSwitcher(false);
+            return Clutter.EVENT_STOP;
+        }
+
+        let action = global.display.get_keybinding_action(keyCode, modifierState);
+        if (action > 0) {
+            let entry = keybindingManager.getBindingById(action);
+            if (!_shouldFilterKeybinding(entry)) {
+                _shortcutInvokedSinceModifier = true;
+                _invokeKeybindingAction(action, modifierState);
+                return Clutter.EVENT_STOP;
+            }
+        }
+
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    // Release event
+    if (_isModifierKeyval(event.get_key_symbol())) {
+        // Activate the single-key modifier keybinding if one was stored.
+        if (_modifierOnlyAction > 0) {
+            let action = _modifierOnlyAction;
+            _modifierOnlyAction = 0;
+            _invokeKeybindingAction(action, modifierState);
+            return Clutter.EVENT_STOP;
+        }
+
+        // If the modifier was used as part of a shortcut (a keybinding was invoked
+        // here while it was held), consume its release so it isn't mistaken for a
+        // bare tap.
+        if (_shortcutInvokedSinceModifier)
+            return Clutter.EVENT_STOP;
+    }
+
+    return Clutter.EVENT_PROPAGATE;
+}
+
+function _findModal(actor) {
+    for (let i = 0; i < modalActorFocusStack.length; i++) {
+        if (modalActorFocusStack[i].actor == actor)
+            return i;
+    }
+    return -1;
+}
+
+function _completeModalSetup(actor, mode, onDismiss) {
+    _modifierOnlyAction = 0;
+    _shortcutInvokedSinceModifier = false;
+
+    if (modalCount == 0)
+        Meta.disable_unredirect_for_display(global.display);
+
+    global.set_stage_input_mode(Cinnamon.StageInputMode.FULLSCREEN);
+
+    actionMode = mode;
+
+    modalCount += 1;
+    let actorDestroyId = actor.connect('destroy', function() {
+        let index = _findModal(actor);
+        if (index >= 0)
+            popModal(actor);
+    });
+
+    let record = {
+        actor: actor,
+        focus: global.stage.get_key_focus(),
+        destroyId: actorDestroyId,
+        actionMode: mode,
+        onDismiss: onDismiss || null
+    };
+    if (record.focus != null) {
+        record.focusDestroyId = record.focus.connect('destroy', function() {
+            record.focus = null;
+            record.focusDestroyId = null;
+        });
+    }
+    modalActorFocusStack.push(record);
+
+    global.stage.set_key_focus(actor);
+
+    layoutManager.updateChrome(true);
+}
+
+/**
+ * pushModal:
+ * @actor (Clutter.Actor): actor which will be given keyboard focus
+ * @timestamp (int): optional timestamp
+ * @options (Meta.ModalOptions): (optional) flags to indicate that the pointer
+ * is already grabbed
+ * @mode (Cinnamon.ActionMode): (optional) action mode, defaults to SYSTEM_MODAL
+ * @onDismiss (function): (optional) callback invoked by dismissInternalModals()
+ * to cleanly release this grab.
+ *
+ * Ensure we are in a mode where all keyboard and mouse input goes to
+ * the stage, and focus @actor. Multiple calls to this function act in
+ * a stacking fashion; the effect will be undone when an equal number
+ * of popModal() invocations have been made.
+ *
+ * Next, record the current Clutter keyboard focus on a stack. If the
+ * modal stack returns to this actor, reset the focus to the actor
+ * which was focused at the time pushModal() was invoked.
+ *
+ * @timestamp is optionally used to associate the call with a specific user
+ * initiated event.  If not provided then the value of
+ * global.get_current_time() is assumed.
+ *
+ * @mode determines which keybindings and actions are allowed while modal.
+ * If not provided, defaults to SYSTEM_MODAL.
+ *
+ * Returns (boolean): true iff we successfully acquired a grab or already had one
+ */
+function pushModal(actor, timestamp, options, mode, onDismiss) {
+    if (tryPushModal(actor, timestamp, options, mode, onDismiss))
+        return true;
+
+    log('pushModal: invocation of begin_modal failed');
+    return false;
+}
+
+/**
+ * tryPushModal:
+ *
+ * Like pushModal(), but doesn't log a failure. For a first attempt that
+ * falls back to a keyboard-only grab (Meta.ModalOptions.POINTER_ALREADY_GRABBED)
+ * when another client holds the pointer.
+ */
+function tryPushModal(actor, timestamp, options, mode, onDismiss) {
+    if (timestamp == undefined)
+        timestamp = global.get_current_time();
+
+    if (mode == undefined)
+        mode = Cinnamon.ActionMode.SYSTEM_MODAL;
+
+    if (modalCount == 0 && !global.begin_modal(timestamp, options ? options : 0))
+        return false;
+
+    _completeModalSetup(actor, mode, onDismiss);
+    return true;
+}
+
+/**
+ * pushScreensaverModal:
+ * @actor (Clutter.Actor): actor which will be given keyboard focus.
+ * @timestamp (number): optional X server timestamp.
+ * @mode (Cinnamon.ActionMode): the action mode for the modal grab.
+ * @callback (function): called with (success) when the grab completes.
+ *
+ * Like pushModal(), but uses begin_modal_with_retry() to asynchronously
+ * retry the grab on X11, using libxdo to break stuck grabs from popup
+ * menus. The callback is called with true on success, false on failure.
+ */
+function pushScreensaverModal(actor, timestamp, mode, callback) {
+    if (timestamp == undefined)
+        timestamp = global.get_current_time();
+
+    global.begin_modal_with_retry(timestamp, 0,
+        (obj, success) => {
+            if (!success) {
+                log('pushScreensaverModal: failed to acquire modal grab after retries (or cancelled)');
+                callback(false);
+                return;
+            }
+
+            try {
+                _completeModalSetup(actor, mode);
+                callback(true);
+            } catch (e) {
+                global.logError(`pushScreensaverModal: error during modal setup: ${e.message}`);
+                global.end_modal(global.get_current_time());
+                callback(false);
+            }
+        });
+}
+
+/**
+ * setActionMode:
+ * @actor (Clutter.Actor): actor currently holding the modal grab.
+ * @mode (Cinnamon.ActionMode): the new action mode.
+ *
+ * Change the action mode for an existing modal grab without releasing
+ * and reacquiring the grab. This avoids a window where there is no
+ * grab, which is important for the lock screen.
+ */
+function setActionMode(actor, mode) {
+    let focusIndex = _findModal(actor);
+    if (focusIndex < 0) {
+        global.logWarning('setActionMode: actor is not in the modal stack');
+        return;
+    }
+
+    if (modalActorFocusStack[focusIndex].actionMode === mode)
+        return;
+
+    actionMode = mode;
+    modalActorFocusStack[focusIndex].actionMode = mode;
+}
+
+/**
+ * popModal:
+ * @actor (Clutter.Actor): actor passed to original invocation of pushModal().
+ * @timestamp (int): optional timestamp
+ *
+ * Reverse the effect of pushModal().  If this invocation is undoing
+ * the topmost invocation, then the focus will be restored to the
+ * previous focus at the time when pushModal() was invoked.
+ *
+ * @timestamp is optionally used to associate the call with a specific user
+ * initiated event.  If not provided then the value of
+ * global.get_current_time() is assumed.
+ */
+function popModal(actor, timestamp) {
+    if (timestamp == undefined)
+        timestamp = global.get_current_time();
+
+    let focusIndex = _findModal(actor);
+    if (focusIndex < 0) {
+        global.stage.set_key_focus(null);
+        global.end_modal(timestamp);
+        global.set_stage_input_mode(Cinnamon.StageInputMode.NORMAL);
+
+        throw new Error('incorrect pop');
+    }
+
+    modalCount -= 1;
+
+    let record = modalActorFocusStack[focusIndex];
+    if (record.destroyId) record.actor.disconnect(record.destroyId);
+    record.destroyId = 0;
+
+    if (focusIndex == modalActorFocusStack.length - 1) {
+        if (record.focusDestroyId) {
+            record.focus.disconnect(record.focusDestroyId);
+            record.focusDestroyId = 0;
+        }
+        global.stage.set_key_focus(record.focus);
+    } else {
+        let t = modalActorFocusStack[modalActorFocusStack.length - 1];
+        if (t.focus)
+            t.focus.disconnect(t.focusDestroyId);
+        // Remove from the middle, shift the focus chain up
+        for (let i = modalActorFocusStack.length - 1; i > focusIndex; i--) {
+            modalActorFocusStack[i].focus = modalActorFocusStack[i - 1].focus;
+            modalActorFocusStack[i].focusDestroyId = modalActorFocusStack[i - 1].focusDestroyId;
+        }
+    }
+    modalActorFocusStack.splice(focusIndex, 1);
+
+    if (modalCount > 0) {
+        let topModal = modalActorFocusStack[modalActorFocusStack.length - 1];
+        actionMode = topModal.actionMode;
+        return;
+    }
+
+    global.end_modal(timestamp);
+    global.set_stage_input_mode(Cinnamon.StageInputMode.NORMAL);
+    actionMode = Cinnamon.ActionMode.NORMAL;
+
+    layoutManager.updateChrome(true);
+
+    Meta.enable_unredirect_for_display(global.display);
+}
+
+/**
+ * dismissInternalModals:
+ *
+ * Cleanly release every Cinnamon-internal modal grab currently on the stack.
+ * Used by the internal screensaver and called over dbus by cinnamon-screensaver
+ * -command for cinnamon-screensaver or custom-command mode.
+ */
+function dismissInternalModals() {
+    let guard = modalActorFocusStack.length * 2 + 4;
+
+    while (modalActorFocusStack.length > 0 && guard-- > 0) {
+        let record = modalActorFocusStack[modalActorFocusStack.length - 1];
+        let actor = record.actor;
+
+        if (typeof record.onDismiss === 'function') {
+            try {
+                record.onDismiss();
+            } catch (e) {
+                global.logError(`dismissInternalModals: onDismiss threw: ${e.message}`);
+            }
+        } else {
+            global.logWarning('dismissInternalModals: modal actor has no onDismiss; force-popping');
+        }
+
+        let idx = _findModal(actor);
+        if (idx !== -1) {
+            try {
+                popModal(actor);
+            } catch (e) {
+                global.logError(`dismissInternalModals: force-pop failed: ${e.message}`);
+                modalActorFocusStack.splice(idx, 1);
+                modalCount = Math.max(0, modalCount - 1);
+            }
+        }
+    }
+
+    if (modalActorFocusStack.length > 0 || modalCount > 0) {
+        global.logError('dismissInternalModals: stack non-empty after walk, forcing reset');
+        modalActorFocusStack.length = 0;
+        modalCount = 0;
+        global.end_modal(global.get_current_time());
+        global.set_stage_input_mode(Cinnamon.StageInputMode.NORMAL);
+        actionMode = Cinnamon.ActionMode.NORMAL;
+    }
+}
+
+/**
+ * createLookingGlass:
+ *
+ * Obtains the looking glass object. Create if it does not exist
+ *
+ * Returns (LookingGlass.Melange): looking glass object
+ */
+function createLookingGlass() {
+    if (lookingGlass == null) {
+        lookingGlass = new LookingGlass.Melange();
+    }
+    return lookingGlass;
+}
+
+/**
+ * getRunDialog:
+ *
+ * Obtains the run dialog object. Create if it does not exist
+ *
+ * Returns (RunDialog.RunDialog): run dialog object
+ */
+function getRunDialog() {
+    if (runDialog == null) {
+        runDialog = new RunDialog.RunDialog();
+    }
+    return runDialog;
+}
+
+/**
+ * activateWindow:
+ * @window (Meta.Window): the Meta.Window to activate
+ * @time (int): (optional) current event time
+ * @workspaceNum (int): (optional) workspace number to switch to
+ *
+ * Activates @window, switching to workspaceNum first if provided,
+ * and switching out of the overview if it's currently active. If
+ * no workspace is provided, workspace-related behavior during
+ * activation will be handled in muffin.
+ */
+function activateWindow(window, time, workspaceNum) {
+    let activeWorkspaceNum = global.workspace_manager.get_active_workspace_index();
+
+    if (!time)
+        time = global.get_current_time();
+
+    if ((workspaceNum !== undefined) && activeWorkspaceNum !== workspaceNum) {
+        let workspace = global.workspace_manager.get_workspace_by_index(workspaceNum);
+        workspace.activate_with_focus(window, time);
+        return;
+    }
+
+    window.activate(time);
+    Mainloop.idle_add(function() {
+        window.foreach_transient(function(win) {
+            if (win.get_window_type() != Meta.WindowType.NORMAL) {
+                win.activate(time);
+            }
+        });
+    });
+
+    overview.hide();
+    expo.hide();
+}
+
+// TODO - replace this timeout with some system to guess when the user might
+// be e.g. just reading the screen and not likely to interact.
+const DEFERRED_TIMEOUT_SECONDS = 20;
+var _deferredWorkData = {};
+// Work scheduled for some point in the future
+var _deferredWorkQueue = [];
+// Work we need to process before the next redraw
+var _beforeRedrawQueue = [];
+// Counter to assign work ids
+var _deferredWorkSequence = 0;
+var _deferredTimeoutId = 0;
+
+function _runDeferredWork(workId) {
+    if (!_deferredWorkData[workId])
+        return;
+    let index = _deferredWorkQueue.indexOf(workId);
+    if (index < 0)
+        return;
+
+    _deferredWorkQueue.splice(index, 1);
+    _deferredWorkData[workId].callback();
+    if (_deferredWorkQueue.length == 0 && _deferredTimeoutId > 0) {
+        Mainloop.source_remove(_deferredTimeoutId);
+        _deferredTimeoutId = 0;
+    }
+}
+
+function _runAllDeferredWork() {
+    while (_deferredWorkQueue.length > 0)
+        _runDeferredWork(_deferredWorkQueue[0]);
+}
+
+function _runBeforeRedrawQueue() {
+    for (let i = 0; i < _beforeRedrawQueue.length; i++) {
+        let workId = _beforeRedrawQueue[i];
+        _runDeferredWork(workId);
+    }
+    _beforeRedrawQueue = [];
+}
+
+function _queueBeforeRedraw(workId) {
+    _beforeRedrawQueue.push(workId);
+    if (_beforeRedrawQueue.length == 1) {
+        Meta.later_add(Meta.LaterType.BEFORE_REDRAW, function () {
+            _runBeforeRedrawQueue();
+            return false;
+        });
+    }
+}
+
+/**
+ * initializeDeferredWork:
+ * @actor (Clutter.Actor): A #ClutterActor
+ * @callback (function): Function to invoke to perform work
+ *
+ * This function sets up a callback to be invoked when either the
+ * given actor is mapped, or after some period of time when the machine
+ * is idle.  This is useful if your actor isn't always visible on the
+ * screen (for example, all actors in the overview), and you don't want
+ * to consume resources updating if the actor isn't actually going to be
+ * displaying to the user.
+ *
+ * Note that queueDeferredWork is called by default immediately on
+ * initialization as well, under the assumption that new actors
+ * will need it.
+ *
+ * Returns (string): A string work identifier
+ */
+function initializeDeferredWork(actor, callback, props) {
+    // Turn into a string so we can use as an object property
+    let workId = '' + (++_deferredWorkSequence);
+    _deferredWorkData[workId] = { 'actor': actor,
+                                  'callback': callback };
+    actor.connect('notify::mapped', function () {
+        if (!(actor.mapped && _deferredWorkQueue.indexOf(workId) >= 0))
+            return;
+        _queueBeforeRedraw(workId);
+    });
+    actor.connect('destroy', function() {
+        let index = _deferredWorkQueue.indexOf(workId);
+        if (index >= 0)
+            _deferredWorkQueue.splice(index, 1);
+        delete _deferredWorkData[workId];
+    });
+    queueDeferredWork(workId);
+    return workId;
+}
+
+/**
+ * queueDeferredWork:
+ * @workId (string): work identifier
+ *
+ * Ensure that the work identified by @workId will be
+ * run on map or timeout.  You should call this function
+ * for example when data being displayed by the actor has
+ * changed.
+ */
+function queueDeferredWork(workId) {
+    let data = _deferredWorkData[workId];
+    if (!data) {
+        global.logError('invalid work id: ' +  workId);
+        return;
+    }
+    if (_deferredWorkQueue.indexOf(workId) < 0)
+        _deferredWorkQueue.push(workId);
+    if (data.actor.mapped) {
+        _queueBeforeRedraw(workId);
+        return;
+    } else if (_deferredTimeoutId == 0) {
+        _deferredTimeoutId = Mainloop.timeout_add_seconds(DEFERRED_TIMEOUT_SECONDS, function () {
+            _runAllDeferredWork();
+            _deferredTimeoutId = 0;
+            return false;
+        });
+    }
+}
+
+/**
+ * isInteresting:
+ * @metaWindow (Meta.Window): the window to be tested
+ *
+ * Determines whether a window is "interesting", i.e.
+ * ones to be displayed in alt-tab, window list etc.
+ *
+ * Returns (boolean): whether the window is interesting
+ */
+function isInteresting(metaWindow) {
+
+    if (metaWindow.get_title() == "JavaEmbeddedFrame")
+        return false;
+
+    // Include any window the tracker finds interesting
+    if (tracker.is_window_interesting(metaWindow)) {
+        return true;
+    }
+
+    // Include app-less dialogs
+    let type = metaWindow.get_window_type();
+    if (!tracker.get_window_app(metaWindow) && (type === Meta.WindowType.DIALOG || type === Meta.WindowType.MODAL_DIALOG)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * getTabList:
+ * @workspaceOpt (Meta.Workspace): (optional) workspace, defaults to global.workspace_manager.get_active_workspace()
+ *
+ * Return a list of the interesting windows on a workspace (by default,
+ * the active workspace).
+ * The list will include app-less dialogs.
+ *
+ * Returns (array): list of windows
+ */
+function getTabList(workspaceOpt) {
+    let workspace = workspaceOpt || global.workspace_manager.get_active_workspace();
+
+    let windows = []; // the array to return
+
+    let allwindows = global.display.get_tab_list(Meta.TabList.NORMAL_ALL, workspace);
+    let registry = {}; // to avoid duplicates
+
+    for (let i = 0; i < allwindows.length; ++i) {
+        let window = allwindows[i];
+        if (isInteresting(window)) {
+            let seqno = window.get_stable_sequence();
+            if (!registry[seqno]) {
+                windows.push(window);
+                registry[seqno] = true; // there may be duplicates in the list (rare)
+            }
+        }
+    }
+    return windows;
+}
+
+function restartCinnamon(showOsd = false) {
+    if (Meta.is_wayland_compositor()) {
+        global.logWarning("Cinnamon restart not supported with Wayland");
+        return;
+    }
+    global.display.connect("show-restart-message", () => {
+        if (showOsd) {
+            let dialog = new ModalDialog.InfoOSD(_("Restarting Cinnamon..."));
+            dialog.actor.add_style_class_name('restart-osd');
+            dialog.show();
+
+            return true;
+        }
+        return false;
+    });
+
+    virtualKeyboardManager.destroyKeyboard();
+
+    global.reexec_self();
+}
+
+function showEndSessionDialog(mode) {
+    if (endSessionDialog != null) {
+        global.logWarning("End session dialog already exists");
+        return;
+    }
+
+    endSessionDialog = new EndSessionDialog(mode);
+    if (!endSessionDialog.open()) {
+        endSessionDialog.close();
+        endSessionDialog = null;
+        global.logWarning("Failed to open end session dialog");
+    }
+}
+
+function closeEndSessionDialog() {
+    if (endSessionDialog == null) {
+        return;
+    }
+
+    endSessionDialog.close();
+    endSessionDialog = null;
+}
+
+function toggleKeyboard() {
+    if (!screensaverController?.toggleScreensaverKeyboard())
+        virtualKeyboardManager.manualToggle();
+}
